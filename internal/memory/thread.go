@@ -43,7 +43,7 @@ func WithThread(c Context, thread string) (Context, error) {
 		c.NextQuestion = "I have the saved details for this requirement. What would you like to update or continue?"
 		for _, f := range work.Known {
 			if f.Status == "conflict" {
-				c.NextQuestion = "The saved requirement contains conflicting product details. Which value should we use?"
+				c.NextQuestion = "The saved requirement contains conflicting details. Which value should we use?"
 				break
 			}
 		}

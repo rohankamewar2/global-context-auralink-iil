@@ -82,6 +82,21 @@ func TestPostgresSessionBinding(t *testing.T) {
 	if voice.Token == chat.Token {
 		t.Fatal("distinct durable sessions reused a capability")
 	}
+	gateway, err := GatewayHandler(c, PGStore{pool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat := request(gateway, "POST", "/v1/sarvam/on-start", `{"session_id":"`+voice.Session.ID+`"}`, c.ToolToken, voice.Token)
+	var mapped map[string]any
+	if flat.Code != 200 || json.Unmarshal(flat.Body.Bytes(), &mapped) != nil || mapped["memory_md"] != snapshot.MD || mapped["session_id"] != voice.Session.ID || mapped["memory_version"] != "1" {
+		t.Fatal("database-backed gateway failed canonical flat variable mapping")
+	}
+	if request(gateway, "POST", "/v1/sarvam/on-start", `{"session_id":"`+voice.Session.ID+`"}`, c.ToolToken, chat.Token).Code != 404 {
+		t.Fatal("database-backed gateway accepted another session's capability")
+	}
+	if request(gateway, "POST", "/v1/sarvam/on-start", `{"session_id":"`+chat.Session.ID+`"}`, c.ToolToken, chat.Token).Code != 409 {
+		t.Fatal("provider gateway accepted a chat session")
+	}
 	wrong := request(mux, "POST", "/v1/sarvam/on-start", `{"session_id":"`+chat.Session.ID+`"}`, c.ToolToken, voice.Token)
 	if wrong.Code != 404 {
 		t.Fatal("database-backed session accepted another session's capability")
@@ -107,6 +122,7 @@ func TestPostgresSessionBinding(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE context_sessions SET scope_id=$2 WHERE id=$1`, chat.Session.ID, otherID); err == nil {
 		t.Fatal("database accepted cross-role session substitution")
 	}
+	verifyLiveUpdates(t, ctx, pool, mux, c, voice, chat)
 	if _, err := pool.Exec(ctx, `UPDATE publication_state SET accepted_revision=accepted_revision+1 WHERE scope_id=$1`, scopeID); err != nil {
 		t.Fatal(err)
 	}
@@ -114,11 +130,17 @@ func TestPostgresSessionBinding(t *testing.T) {
 	if w.Code != 503 {
 		t.Fatal("agent did not block pending revision")
 	}
+	if request(gateway, "POST", "/v1/sarvam/on-start", `{"session_id":"`+voice.Session.ID+`"}`, c.ToolToken, voice.Token).Code != 503 {
+		t.Fatal("database-backed gateway served memory with pending updates")
+	}
 	if _, err := pool.Exec(ctx, `UPDATE context_sessions SET created_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, chat.Session.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := (PGStore{pool}).Session(ctx, chat.Session.ID); err != ErrNotFound {
 		t.Fatal("database did not enforce session expiry")
+	}
+	if request(gateway, "POST", "/v1/sarvam/on-start", `{"session_id":"`+chat.Session.ID+`"}`, c.ToolToken, chat.Token).Code != 404 {
+		t.Fatal("database-backed gateway accepted an expired session")
 	}
 }
 

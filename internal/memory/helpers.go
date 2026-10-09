@@ -89,6 +89,11 @@ func validateScope(s Scope) error {
 	return nil
 }
 func (p Policy) Validate() error {
+	if p.LiveAsOfDate != "" {
+		if _, err := time.Parse("2006-01-02", p.LiveAsOfDate); err != nil {
+			return errors.New("invalid live receipt reference date")
+		}
+	}
 	if _, err := time.Parse("2006-01-02", p.AsOfDate); err != nil {
 		return errors.New("memory reference date must be YYYY-MM-DD")
 	}

@@ -14,6 +14,8 @@ import (
 
 	"github.com/rohankamewar2/global-context-auralink-iil/internal/contextapi"
 	"github.com/rohankamewar2/global-context-auralink-iil/internal/database"
+	"github.com/rohankamewar2/global-context-auralink-iil/internal/demoui"
+	"github.com/rohankamewar2/global-context-auralink-iil/internal/refresh"
 	"github.com/rohankamewar2/global-context-auralink-iil/internal/sarvam"
 )
 
@@ -67,6 +69,20 @@ func run() error {
 		if err := contextapi.Register(mux, *apiConfig, contextapi.PGStore{Pool: pool}); err != nil {
 			return err
 		}
+		demoui.Register(mux)
+		// One local worker is enough for the demo. Durable tasks stay in PG;
+		// shutdown joins the worker before closing its database pool.
+		var jobsReady bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass('refresh_jobs') IS NOT NULL AND to_regclass('chat_turns') IS NOT NULL`).Scan(&jobsReady); err != nil || !jobsReady {
+			return errors.New("refresh schema unavailable; run go run ./cmd/migrate")
+		}
+		workerCtx, stopWorker := context.WithCancel(ctx)
+		workerDone := make(chan struct{})
+		go func() {
+			defer close(workerDone)
+			(refresh.Worker{Pool: pool, ExportRoot: "artifacts/exports"}).Run(workerCtx)
+		}()
+		defer func() { stopWorker(); <-workerDone }()
 		if os.Getenv("SARVAM_VOICE_API_KEY") != "" {
 			voiceConfig, err := sarvam.LoadConfig()
 			if err != nil {

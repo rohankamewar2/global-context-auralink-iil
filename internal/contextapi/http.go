@@ -62,6 +62,10 @@ func Register(mux *http.ServeMux, c Config, s Store) error {
 	mux.HandleFunc("GET /v1/users/{glid}/threads", a.demo(a.threads))
 	mux.HandleFunc("POST /v1/sessions", a.demo(a.createSession))
 	mux.HandleFunc("GET /v1/sessions/{id}/checkpoint", a.demo(a.checkpoint))
+	mux.HandleFunc("POST /v1/sessions/{id}/updates", a.demo(a.recordUpdate))
+	mux.HandleFunc("GET /v1/sessions/{id}/updates/{key}", a.demo(a.updateStatus))
+	mux.HandleFunc("POST /v1/sessions/{id}/chat", a.demo(a.chat))
+	mux.HandleFunc("GET /v1/sessions/{id}/chat", a.demo(a.chatHistory))
 	// Internal adapter entry points, not an assertion of Sarvam's on-start wire format.
 	mux.HandleFunc("POST /v1/sarvam/on-start", a.tool(a.agentContext))
 	mux.HandleFunc("POST /v1/sarvam/tools/{tool}", a.tool(a.agentContext))
@@ -338,6 +342,10 @@ func (a *API) checkpoint(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) agentContext(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("tool")
+	if name == "record_user_update" {
+		a.voiceUpdate(w, r)
+		return
+	}
 	if name != "" && name != "get_thread_context" && name != "get_missing_fields" {
 		if name == "record_user_update" || name == "record_callback_request" {
 			fail(w, 501, "write_tool_not_implemented")
@@ -346,17 +354,26 @@ func (a *API) agentContext(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	v, ok := a.agentSession(w, r)
+	if !ok {
+		return
+	}
+	a.sessionContext(w, r, v, true)
+}
+
+// Shared capability checks keep the local API and tunnel ingress in agreement.
+func (a *API) agentSession(w http.ResponseWriter, r *http.Request) (Session, bool) {
 	var req struct {
 		ID string `json:"session_id"`
 	}
 	if !decodeBody(w, r, &req) {
-		return
+		return Session{}, false
 	}
 	v, ok := a.boundSession(r, req.ID)
 	token := r.Header.Get("X-Auralink-Session-Token")
 	if !ok || !hexToken.MatchString(token) || !equalSecret(digest(token), v.CapabilityHash) {
 		fail(w, 404, "session_unavailable")
-		return
+		return Session{}, false
 	}
-	a.sessionContext(w, r, v, true)
+	return v, true
 }

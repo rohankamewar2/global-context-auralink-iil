@@ -124,6 +124,18 @@ WHERE u.tenant_id=$1 AND u.namespace=$2 AND u.glid=$3 AND s.role=$4`, scope.Tena
 	if err != nil {
 		return snapshot, errors.New("could not lock memory revision")
 	}
+	// Resolve the live receipt reference at the locked accepted revision. A
+	// pre-lock worker lookup could miss an update arriving across midnight and
+	// incorrectly publish a watermark that omitted its newly accepted fields.
+	var latestReceipt *time.Time
+	err = tx.QueryRow(ctx, `SELECT max(r.received_at) FROM event_projections p JOIN raw_events r ON r.id=p.event_id
+ WHERE p.scope_id=$1 AND p.scope_revision<=$2 AND r.source='local.session_update'`, scopeID, accepted).Scan(&latestReceipt)
+	if err != nil {
+		return snapshot, errors.New("could not resolve live receipt reference")
+	}
+	if latestReceipt != nil {
+		policy.LiveAsOfDate = latestReceipt.UTC().Format("2006-01-02")
+	}
 	if current != nil && accepted == published {
 		previous, err := loadSnapshot(ctx, tx, scope, scopeID, *current)
 		if err != nil {
@@ -147,7 +159,7 @@ WHERE u.tenant_id=$1 AND u.namespace=$2 AND u.glid=$3 AND s.role=$4`, scope.Tena
 	if err := decode(provenance, &input.Provenance); err != nil {
 		return snapshot, errors.New("could not decode profile provenance")
 	}
-	rows, err := tx.Query(ctx, `SELECT r.id,p.scope_revision,r.source,r.source_entity_id,r.event_kind,r.channel,COALESCE(t.thread_ref,''),COALESCE(r.source_time_raw,''),r.occurred_at,r.time_quality,r.payload
+	rows, err := tx.Query(ctx, `SELECT r.id,p.scope_revision,r.source,r.source_entity_id,r.event_kind,r.channel,COALESCE(t.thread_ref,''),COALESCE(r.source_time_raw,''),r.occurred_at,r.time_quality,r.payload,r.received_at
 FROM event_projections p JOIN raw_events r ON r.id=p.event_id LEFT JOIN conversation_threads t ON t.id=p.thread_id
 WHERE p.scope_id=$1 AND p.scope_revision<=$2 ORDER BY p.scope_revision LIMIT 20001`, scopeID, accepted)
 	if err != nil {
@@ -156,7 +168,7 @@ WHERE p.scope_id=$1 AND p.scope_revision<=$2 ORDER BY p.scope_revision LIMIT 200
 	for rows.Next() {
 		var e Event
 		var payload []byte
-		if err := rows.Scan(&e.ID, &e.Revision, &e.Source, &e.EntityID, &e.Kind, &e.Channel, &e.ThreadRef, &e.RawTime, &e.OccurredAt, &e.TimeQuality, &payload); err != nil {
+		if err := rows.Scan(&e.ID, &e.Revision, &e.Source, &e.EntityID, &e.Kind, &e.Channel, &e.ThreadRef, &e.RawTime, &e.OccurredAt, &e.TimeQuality, &payload, &e.ReceivedAt); err != nil {
 			rows.Close()
 			return snapshot, errors.New("could not read scoped evidence")
 		}

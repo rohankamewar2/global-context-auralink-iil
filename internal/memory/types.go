@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const RendererVersion = "structured-baseline-v4"
+const RendererVersion = "structured-live-v5"
 
 type Scope struct {
 	Tenant    string `json:"tenant_id"`
@@ -18,6 +18,7 @@ type Scope struct {
 
 type Policy struct {
 	AsOfDate         string `json:"as_of_source_date"`
+	LiveAsOfDate     string `json:"as_of_live_receipt_date,omitempty"`
 	ActivityDays     int    `json:"activity_lookback_days"`
 	ConversationDays int    `json:"conversation_lookback_days"`
 	MaxBytes         int    `json:"max_markdown_bytes"`
@@ -29,6 +30,7 @@ type Event struct {
 	Revision                                                         int64
 	Source, EntityID, Kind, Channel, ThreadRef, RawTime, TimeQuality string
 	OccurredAt                                                       *time.Time
+	ReceivedAt                                                       time.Time
 	Payload                                                          map[string]any
 }
 
