@@ -7,15 +7,19 @@ import (
 )
 
 func TestVoiceEditorStringArguments(t *testing.T) {
+	var mapped VoiceUpdateRequest
+	if err := json.Unmarshal([]byte(`{"session_id":"x","confirmed":"true","update":{"idempotency_key":"x","kind":"correction","fields":{"product":"steel","quantity":"500"},"evidence":"yes","supersedes_event_ids":{"product":"E2","quantity":"4"}}}`), &mapped); err != nil || mapped.Update.SupersedesEventIDs["product"] != 2 || mapped.Update.SupersedesEventIDs["quantity"] != 4 || !mapped.Update.valid("req:a") {
+		t.Fatal("field-target adapter rejected valid request")
+	}
 	update := `{"idempotency_key":"edit-1","kind":"correction","fields":{"quantity":"300"},"evidence":"yes","supersedes_event_id":2}`
-	for _, target := range []string{`"3"`, `3`} {
+	for _, target := range []string{`"3"`, `3`, `"E3"`} {
 		var got VoiceUpdateRequest
 		body := `{"session_id":"x","confirmed":true,"update":` + strings.Replace(update, `"supersedes_event_id":2`, `"supersedes_event_id":`+target, 1) + `}`
 		if json.Unmarshal([]byte(body), &got) != nil || got.Update.SupersedesEventID != 3 {
 			t.Fatal("provider integer representation rejected")
 		}
 	}
-	for _, target := range []string{`"3.0"`, `3.5`, `"-3"`, `null`, `"03"`, `"99999999999999999999999999"`} {
+	for _, target := range []string{`"3.0"`, `3.5`, `"-3"`, `null`, `"03"`, `"E03"`, `"E-3"`, `"E3junk"`, `"EE3"`, `"99999999999999999999999999"`} {
 		var got VoiceUpdateRequest
 		body := `{"session_id":"x","confirmed":true,"update":` + strings.Replace(update, `"supersedes_event_id":2`, `"supersedes_event_id":`+target, 1) + `}`
 		if json.Unmarshal([]byte(body), &got) == nil {

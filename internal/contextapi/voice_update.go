@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 // The provider's confirmation is a client assertion, not independent proof of
@@ -66,27 +67,52 @@ func (v *VoiceUpdateRequest) UnmarshalJSON(data []byte) error {
 		return errors.New("update object required")
 	}
 	var payload struct {
-		IdempotencyKey string            `json:"idempotency_key"`
-		Kind           string            `json:"kind"`
-		Fields         map[string]string `json:"fields"`
-		Evidence       string            `json:"evidence"`
-		Target         json.RawMessage   `json:"supersedes_event_id"`
+		IdempotencyKey string                     `json:"idempotency_key"`
+		Kind           string                     `json:"kind"`
+		Fields         map[string]string          `json:"fields"`
+		Evidence       string                     `json:"evidence"`
+		Target         json.RawMessage            `json:"supersedes_event_id"`
+		Targets        map[string]json.RawMessage `json:"supersedes_event_ids"`
 	}
 	if err := strict(update, &payload); err != nil {
 		return err
 	}
+	parseTarget := func(raw json.RawMessage) (int64, error) {
+		number, err := normalize(raw)
+		if err != nil {
+			return 0, err
+		}
+		// Markdown citations render event IDs as E2. Accept this exact display
+		// prefix only for quoted IDs; SQL still enforces correction ownership.
+		idText := string(number)
+		if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '"' {
+			idText = strings.TrimPrefix(idText, "E")
+		}
+		target, err := strconv.ParseInt(idText, 10, 64)
+		if err != nil || target <= 0 || strconv.FormatInt(target, 10) != idText {
+			return 0, errors.New("positive integer evidence ID required")
+		}
+		return target, nil
+	}
 	var target int64
 	if len(payload.Target) > 0 {
-		number, err := normalize(payload.Target)
+		target, err = parseTarget(payload.Target)
 		if err != nil {
 			return err
 		}
-		target, err = strconv.ParseInt(string(number), 10, 64)
-		if err != nil || target <= 0 || strconv.FormatInt(target, 10) != string(number) {
-			return errors.New("positive integer evidence ID required")
+	}
+	var targets map[string]int64
+	if len(payload.Targets) > 0 {
+		targets = map[string]int64{}
+		for field, raw := range payload.Targets {
+			id, e := parseTarget(raw)
+			if e != nil {
+				return e
+			}
+			targets[field] = id
 		}
 	}
-	parsed := UpdateRequest{IdempotencyKey: payload.IdempotencyKey, Kind: payload.Kind, Fields: payload.Fields, Evidence: payload.Evidence, SupersedesEventID: target}
+	parsed := UpdateRequest{IdempotencyKey: payload.IdempotencyKey, Kind: payload.Kind, Fields: payload.Fields, Evidence: payload.Evidence, SupersedesEventID: target, SupersedesEventIDs: targets}
 	*v = VoiceUpdateRequest{SessionID: wire.SessionID, Confirmed: bytes.Equal(confirmation, []byte("true")), Update: parsed}
 	return nil
 }

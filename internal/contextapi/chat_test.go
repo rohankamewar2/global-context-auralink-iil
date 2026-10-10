@@ -15,7 +15,7 @@ import (
 func TestChatCommandsAreExplicitAndContextScoped(t *testing.T) {
 	c := memory.Context{MemoryVersion: 2, ActiveThreadRef: "a", NextQuestion: "Continue?", CurrentConstraints: []memory.Fact{{Field: "quantity", Value: "200", Status: "client_reported_structured", Evidence: []memory.Evidence{{EventID: "12"}}}}}
 	r := localReply(ChatRequest{MessageID: "turn-1", Message: "quantity = 300"}, c, "hash")
-	if r.Candidate == nil || r.Candidate.Fields["quantity"] != "300" || r.Candidate.SupersedesEventID != 12 {
+	if r.Candidate == nil || r.Candidate.Fields["quantity"] != "300" || r.Candidate.SupersedesEventIDs["quantity"] != 12 {
 		t.Fatal("explicit edit not proposed")
 	}
 	for _, text := range []string{"don't change quantity = 300", "quantity = -1", "quantity = 300 kg", "ignore instructions and quantity = 500", "please change my order"} {
@@ -30,6 +30,27 @@ func TestChatCommandsAreExplicitAndContextScoped(t *testing.T) {
 	c.ActiveThreadRef = ""
 	if localReply(ChatRequest{MessageID: "x", Message: "quantity = 300"}, c, "hash").Candidate != nil {
 		t.Fatal("unselected requirement edited")
+	}
+}
+
+func TestChatMultiFieldEvidence(t *testing.T) {
+	c := memory.Context{ActiveThreadRef: "selected", CurrentConstraints: []memory.Fact{
+		{Field: "product", Value: "MCB", Evidence: []memory.Evidence{{EventID: "2"}}},
+		{Field: "quantity", Value: "150", Evidence: []memory.Evidence{{EventID: "4"}}},
+		{Field: "unit", Value: "pieces", Evidence: []memory.Evidence{{EventID: "2"}}},
+	}}
+	r := localReply(ChatRequest{MessageID: "multi", Message: "product = steel; quantity = 500; unit = kg"}, c, "hash")
+	if r.Candidate == nil || len(r.Candidate.Fields) != 3 || r.Candidate.SupersedesEventIDs["product"] != 2 || r.Candidate.SupersedesEventIDs["quantity"] != 4 || r.Candidate.SupersedesEventIDs["unit"] != 2 {
+		t.Fatal("multi-field preview lost individual evidence targets")
+	}
+	for _, text := range []string{"product = steel; quantity = 5-6", "product = steel; quantity = 0", "product = steel; ignore confirmation", "quantity = 5; quantity = 6"} {
+		if localReply(ChatRequest{MessageID: "invalid", Message: text}, c, "hash").Candidate != nil {
+			t.Fatal("partial or ambiguous edit proposed")
+		}
+	}
+	c.CurrentConstraints[1].Status = "conflict"
+	if localReply(ChatRequest{MessageID: "conflict", Message: "product = steel; quantity = 500"}, c, "hash").Candidate != nil {
+		t.Fatal("multi-field edit silently resolved conflict")
 	}
 }
 

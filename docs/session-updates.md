@@ -1,5 +1,7 @@
 # Local session update acceptance
 
+For edits whose fields have different evidence, see [atomic multi-field corrections](multi-field-corrections.md). The singular target contract below remains compatible.
+
 POST /v1/sessions/{session_id}/updates on the private loopback API (8080).
 
 Headers: Content-Type: application/json; Authorization: Bearer <DEMO_API_BEARER_TOKEN>; X-Auralink-Session-Token: <capability returned when creating that session>. The provider service bearer does not authorize this route. The restricted read gateway does not expose it.

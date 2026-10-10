@@ -134,50 +134,69 @@ func localReply(req ChatRequest, c memory.Context, hash string) ChatResponse {
 	if conflict {
 		result.Reply += " Conflicting details need an explicit correction target."
 	}
-	command := editCommand.FindStringSubmatch(strings.TrimSpace(req.Message))
+	commands := strings.Split(strings.TrimSpace(req.Message), ";")
+	command := editCommand.FindStringSubmatch(strings.TrimSpace(commands[0]))
 	if command == nil {
 		result.Reply += "\nTo propose a change, use a single edit such as quantity = 300. Review it before saving."
 		return result
 	}
-	field, value := strings.ToLower(command[1]), strings.TrimSpace(command[2])
-	fields := map[string]string{field: value}
+	fields := map[string]string{}
+	var descriptions []string
+	for _, text := range commands {
+		part := editCommand.FindStringSubmatch(strings.TrimSpace(text))
+		if part == nil {
+			result.Reply = "Use field = value for every change, separated by semicolons. Nothing was saved."
+			return result
+		}
+		field, value := strings.ToLower(part[1]), strings.TrimSpace(part[2])
+		if _, exists := fields[field]; exists {
+			result.Reply = "Each field must appear only once. Nothing was saved."
+			return result
+		}
+		fields[field] = value
+		descriptions = append(descriptions, field+" = "+value)
+	}
 	if memory.ValidateLiveFields(fields) != nil {
 		result.Reply = "That edit is invalid. Quantity must be a positive decimal; other fields must be nonempty bounded text."
 		return result
 	}
 	// Prefer the field's actual evidence. If the field is new, anchor it to the
 	// selected requirement's product evidence. Never resolve conflicts implicitly.
-	var target int64
-	for _, name := range []string{field, "product"} {
-		for _, f := range c.CurrentConstraints {
-			if f.Field != name {
-				continue
-			}
-			if f.Status == "conflict" {
-				result.Reply = "This field has conflicting evidence. Select the original event explicitly before correcting it."
-				return result
-			}
-			if len(f.Evidence) > 0 {
-				target, _ = strconv.ParseInt(f.Evidence[0].EventID, 10, 64)
+	targets := map[string]int64{}
+	for field := range fields {
+		var target int64
+		for _, name := range []string{field, "product"} {
+			for _, f := range c.CurrentConstraints {
+				if f.Field != name {
+					continue
+				}
+				if f.Status == "conflict" {
+					result.Reply = "This field has conflicting evidence. Select the original event explicitly before correcting it."
+					return result
+				}
+				if len(f.Evidence) > 0 {
+					target, _ = strconv.ParseInt(f.Evidence[0].EventID, 10, 64)
+				}
+				if target > 0 {
+					break
+				}
 			}
 			if target > 0 {
 				break
 			}
 		}
-		if target > 0 {
-			break
+		if target <= 0 {
+			result.Reply = "No eligible evidence target is available. Choose a supported requirement before saving an edit."
+			return result
 		}
+		targets[field] = target
 	}
-	if target <= 0 {
-		result.Reply = "No eligible evidence target is available. Choose a supported requirement before saving an edit."
-		return result
-	}
-	result.Candidate = &UpdateRequest{IdempotencyKey: "chat:" + req.MessageID, Kind: "correction", Fields: fields, Evidence: req.Message, SupersedesEventID: target}
+	result.Candidate = &UpdateRequest{IdempotencyKey: "chat:" + req.MessageID, Kind: "correction", Fields: fields, Evidence: req.Message, SupersedesEventIDs: targets}
 	// Keep update keys within the existing bound even for maximum-size message IDs.
 	if len(result.Candidate.IdempotencyKey) > 128 {
 		result.Candidate.IdempotencyKey = "chat:" + digest(req.MessageID)
 	}
-	result.Reply = fmt.Sprintf("Proposed change: %s = %s. Nothing has been saved to memory yet. Confirm the edit to keep its evidence and refresh memory.", field, value)
+	result.Reply = fmt.Sprintf("Proposed change: %s. Nothing has been saved to memory yet. Confirm the edit to keep its evidence and refresh memory.", strings.Join(descriptions, "; "))
 	return result
 }
 

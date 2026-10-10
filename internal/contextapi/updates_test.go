@@ -297,6 +297,7 @@ func verifyRefreshContinuation(t *testing.T, ctx context.Context, pool *pgxpool.
 		t.Fatal("automatic refresh not visible to resumed session")
 	}
 	verifyLocalChat(t, ctx, pool, h, c, voice, resumed, worker)
+	verifyMultiUpdates(t, ctx, pool, h, c, worker)
 	// A persistent failure eventually stops retrying; fresh data still blocks
 	// stale agent reads until a valid publication succeeds.
 	// Corrupt only the isolated schema's first live event to model malformed evidence.
@@ -307,7 +308,7 @@ func verifyRefreshContinuation(t *testing.T, ctx context.Context, pool *pgxpool.
 		t.Fatal(err)
 	}
 	// Force recompilation instead of the prior same-policy version reuse.
-	if _, err := pool.Exec(ctx, `UPDATE memory_snapshots SET derived_context=jsonb_set(derived_context,'{policy_sha256}','"test"') WHERE memory_version=5`); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE memory_snapshots SET derived_context=jsonb_set(derived_context,'{policy_sha256}','"test"') WHERE memory_version=8`); err != nil {
 		t.Fatal(err)
 	}
 	_, worked, err = worker.Step(ctx)

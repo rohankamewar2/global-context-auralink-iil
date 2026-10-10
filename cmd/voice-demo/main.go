@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -23,12 +24,14 @@ import (
 )
 
 func main() {
-	if run() != nil {
+	role := flag.String("role", "buyer", "buyer or seller synthetic rehearsal")
+	flag.Parse()
+	if (*role != "buyer" && *role != "seller") || run(*role) != nil {
 		fmt.Println("Synthetic UI preview failed")
 		os.Exit(1)
 	}
 }
-func run() error {
+func run(role string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	admin, err := database.Open(ctx)
@@ -64,6 +67,20 @@ func run() error {
 		return err
 	}
 	scope := memory.Scope{Tenant: "local_demo", Namespace: "synthetic_demo", GLID: "900000001", Role: "buyer"}
+	fields := map[string]string{"product": "Steel rods", "quantity": "200", "unit": "kg", "delivery_city": "Noida"}
+	evidence := "Synthetic fixture: I need 200 kg of steel rods in Noida."
+	if role == "seller" {
+		scope.GLID, scope.Role = "900000002", "seller"
+		// All writes are restricted to this newly created disposable schema.
+		if _, err = pool.Exec(ctx, `INSERT INTO users(tenant_id,namespace,glid,is_synthetic,profile,provenance)
+		 VALUES('local_demo','synthetic_demo','900000002',true,'{"display_name":"Synthetic Seller","fixture_id":"seller-mcb-001"}','{"source":"local_fixture","synthetic":true}');
+		 INSERT INTO subject_scopes(user_id,role) SELECT id,'seller' FROM users WHERE glid='900000002';
+		 INSERT INTO publication_state(scope_id) SELECT s.id FROM subject_scopes s JOIN users u ON u.id=s.user_id WHERE u.glid='900000002' AND s.role='seller'`); err != nil {
+			return err
+		}
+		fields = map[string]string{"product": "MCB", "quantity": "100", "unit": "pieces", "delivery_city": "Noida"}
+		evidence = "Synthetic seller enquiry: customer requests 100 pieces of MCB delivered to Noida. This is customer demand, not seller stock."
+	}
 	policy := memory.Policy{AsOfDate: time.Now().UTC().Format("2006-01-02"), ActivityDays: 90, ConversationDays: 30, MaxBytes: 6000}
 	snapshot, err := memory.Generate(ctx, pool, scope, policy)
 	if err != nil {
@@ -74,7 +91,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	receipt, err := store.AcceptUpdate(ctx, v, cap, contextapi.UpdateRequest{IdempotencyKey: "voice-fixture", Kind: "new_requirement", Fields: map[string]string{"product": "Steel rods", "quantity": "200", "unit": "kg", "delivery_city": "Noida"}, Evidence: "Synthetic fixture: I need 200 kg of steel rods in Noida."})
+	receipt, err := store.AcceptUpdate(ctx, v, cap, contextapi.UpdateRequest{IdempotencyKey: "voice-fixture", Kind: "new_requirement", Fields: fields, Evidence: evidence})
 	if err != nil {
 		return err
 	}
@@ -108,7 +125,7 @@ func run() error {
 		return err
 	}
 	vars["active_thread_ref"] = receipt.ThreadRef
-	artifact := map[string]any{"request_body": map[string]string{"session_id": v.ID}, "session_secret": map[string]string{"value": cap}, "expires_at": v.ExpiresAt, "synthetic": true, "thread_ref": receipt.ThreadRef, "agent_variables": vars}
+	artifact := map[string]any{"request_body": map[string]string{"session_id": v.ID}, "session_secret": map[string]string{"value": cap}, "expires_at": v.ExpiresAt, "synthetic": true, "role": role, "export_root": root, "thread_ref": receipt.ThreadRef, "agent_variables": vars}
 	if err = os.MkdirAll("artifacts/voice-demo", 0700); err != nil {
 		return err
 	}

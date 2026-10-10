@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const RendererVersion = "structured-live-v5"
+const RendererVersion = "structured-live-v6"
 
 type Scope struct {
 	Tenant    string `json:"tenant_id"`

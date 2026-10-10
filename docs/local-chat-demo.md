@@ -19,7 +19,7 @@ For a new requirement, choose Start a new requirement, create the session, fill 
 
 ## Confirm an edit
 
-Send one explicit command, for example `quantity = 300`. Supported fields are product, quantity, unit and delivery_city. Quantity must be a positive decimal. General natural-language messages summarize context; they do not extract new facts.
+Send explicit commands, for example `quantity = 300` or `product = steel; quantity = 500; unit = kg`. Supported fields are product, quantity, unit and delivery_city. Quantity must be a positive decimal. Multi-field changes are reviewed together and saved atomically with each field's evidence target. Duplicate fields, invalid values and conflicting evidence reject the entire preview. General natural-language messages summarize context; they do not extract new facts.
 
 Review the proposed value and evidence, then confirm or discard it. A preview does not change memory. Confirmation uses the existing authenticated update API and durable refresh worker. The UI waits for publication/file readiness, displays timings and reloads shared memory. Subsequent replies use that published value. Conflicting fields cannot be automatically corrected through chat.
 

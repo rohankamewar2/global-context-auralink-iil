@@ -22,11 +22,12 @@ var updateKey = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 // transcript evidence. Identity, role, channel and thread ownership come from
 // the authenticated session. Contact-policy changes are outside this contract.
 type UpdateRequest struct {
-	IdempotencyKey    string            `json:"idempotency_key"`
-	Kind              string            `json:"kind"`
-	Fields            map[string]string `json:"fields"`
-	Evidence          string            `json:"evidence"`
-	SupersedesEventID int64             `json:"supersedes_event_id,omitempty"`
+	IdempotencyKey     string            `json:"idempotency_key"`
+	Kind               string            `json:"kind"`
+	Fields             map[string]string `json:"fields"`
+	Evidence           string            `json:"evidence"`
+	SupersedesEventID  int64             `json:"supersedes_event_id,omitempty"`
+	SupersedesEventIDs map[string]int64  `json:"supersedes_event_ids,omitempty"`
 }
 type UpdateReceipt struct {
 	EventID          int64     `json:"event_id"`
@@ -50,10 +51,10 @@ func (u UpdateRequest) valid(thread string) bool {
 	if u.Kind != "new_requirement" && u.Kind != "correction" {
 		return false
 	}
-	if u.Kind == "new_requirement" && (thread != "" || u.SupersedesEventID != 0) {
+	if u.Kind == "new_requirement" && (thread != "" || u.SupersedesEventID != 0 || len(u.SupersedesEventIDs) > 0) {
 		return false
 	}
-	if u.Kind == "correction" && (thread == "" || u.SupersedesEventID <= 0) {
+	if u.Kind == "correction" && (thread == "" || memory.ValidateCorrectionTargets(u.Fields, u.SupersedesEventID, u.SupersedesEventIDs) != nil) {
 		return false
 	}
 	for k, v := range u.Fields {
@@ -166,16 +167,22 @@ func (s PGStore) AcceptUpdate(ctx context.Context, v Session, cap string, u Upda
 		return out, err
 	}
 	if u.Kind == "correction" {
-		var owned bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_projections p JOIN raw_events r ON r.id=p.event_id
+		targets := u.SupersedesEventIDs
+		if len(targets) == 0 {
+			targets = map[string]int64{"": u.SupersedesEventID}
+		}
+		for _, target := range targets {
+			var owned bool
+			err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM event_projections p JOIN raw_events r ON r.id=p.event_id
  WHERE p.event_id=$1 AND p.scope_id=$2 AND p.thread_id=$3 AND
  (r.event_kind='buyer.requirement_snapshot' OR r.source IN ('seller.gc_enquiries_received.csv','seller.gc_enquiry_messages.csv') OR
- (r.source='local.session_update' AND r.event_kind IN ('requirement.new_requirement','requirement.correction'))))`, u.SupersedesEventID, scopeID, threadID).Scan(&owned)
-		if err != nil {
-			return out, err
-		}
-		if !owned {
-			return out, ErrUpdateConflict
+ (r.source='local.session_update' AND r.event_kind IN ('requirement.new_requirement','requirement.correction'))))`, target, scopeID, threadID).Scan(&owned)
+			if err != nil {
+				return out, err
+			}
+			if !owned {
+				return out, ErrUpdateConflict
+			}
 		}
 		out.ThreadRef = v.Thread
 	} else {
@@ -191,7 +198,11 @@ func (s PGStore) AcceptUpdate(ctx context.Context, v Session, cap string, u Upda
 		}
 		threadID = &id
 	}
-	payload, _ := json.Marshal(map[string]any{"fields": u.Fields, "evidence": u.Evidence, "supersedes_event_id": u.SupersedesEventID, "evidence_origin": "authenticated_client_assertion", "claim_status": "submitted_unverified", "session_id": v.ID})
+	payloadData := map[string]any{"fields": u.Fields, "evidence": u.Evidence, "supersedes_event_id": u.SupersedesEventID, "evidence_origin": "authenticated_client_assertion", "claim_status": "submitted_unverified", "session_id": v.ID}
+	if len(u.SupersedesEventIDs) > 0 {
+		payloadData["supersedes_event_ids"] = u.SupersedesEventIDs
+	}
+	payload, _ := json.Marshal(payloadData)
 	err = tx.QueryRow(ctx, `INSERT INTO raw_events(tenant_id,namespace,source,source_entity_id,source_revision,event_kind,channel,payload,content_sha256,time_quality,is_synthetic)
  VALUES($1,$2,'local.session_update',$3,'1',$4,$5,$6,$7,'unresolved',$8) RETURNING id,received_at`, tenant, namespace, v.ID+":"+u.IdempotencyKey, "requirement."+u.Kind, channel, payload, digest(string(payload)), synthetic).Scan(&out.EventID, &out.ReceivedAt)
 	if err != nil {

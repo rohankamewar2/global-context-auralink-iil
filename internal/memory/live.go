@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/big"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -51,6 +52,54 @@ func liveFields(e Event) map[string]string {
 	}
 	return result
 }
+
+// A correction chooses exactly one representation. A per-field map must name
+// every changed field, and cannot silently add unrelated supersession edges.
+func ValidateCorrectionTargets(fields map[string]string, single int64, targets map[string]int64) error {
+	if len(targets) == 0 {
+		if single > 0 {
+			return nil
+		}
+		return errors.New("correction target required")
+	}
+	if single != 0 || len(targets) != len(fields) {
+		return errors.New("ambiguous correction targets")
+	}
+	for field, id := range targets {
+		if _, ok := fields[field]; !ok || id <= 0 {
+			return errors.New("invalid field target")
+		}
+	}
+	return nil
+}
+
+func correctionTargets(e Event) (map[string]int64, error) {
+	fields := liveFields(e)
+	single, _ := strconv.ParseInt(str(e.Payload["supersedes_event_id"]), 10, 64)
+	targets := map[string]int64{}
+	if raw, exists := e.Payload["supersedes_event_ids"]; exists {
+		values, ok := raw.(map[string]any)
+		if !ok {
+			return nil, errors.New("invalid target map")
+		}
+		for field, value := range values {
+			id, err := strconv.ParseInt(str(value), 10, 64)
+			if err != nil {
+				return nil, err
+			}
+			targets[field] = id
+		}
+	}
+	if err := ValidateCorrectionTargets(fields, single, targets); err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		for field := range fields {
+			targets[field] = single
+		}
+	}
+	return targets, nil
+}
 func validateLiveEvents(events []Event) error {
 	byID := map[int64]Event{}
 	for _, e := range events {
@@ -68,13 +117,15 @@ func validateLiveEvents(events []Event) error {
 			return errors.New("new requirement needs product")
 		}
 		if e.Kind == "requirement.correction" {
-			id, ok := new(big.Int).SetString(str(e.Payload["supersedes_event_id"]), 10)
-			if !ok || !id.IsInt64() {
-				return errors.New("invalid correction target")
+			targets, err := correctionTargets(e)
+			if err != nil {
+				return err
 			}
-			target, found := byID[id.Int64()]
-			if !found || target.ID == e.ID || target.ThreadRef != e.ThreadRef || target.Revision >= e.Revision || !requirementEvent(target) {
-				return errors.New("invalid correction ownership or order")
+			for _, id := range targets {
+				target, found := byID[id]
+				if !found || target.ID == e.ID || target.ThreadRef != e.ThreadRef || target.Revision >= e.Revision || !requirementEvent(target) {
+					return errors.New("invalid correction ownership or order")
+				}
 			}
 		}
 	}
@@ -88,11 +139,12 @@ func applyLiveWork(w Work, events []Event) Work {
 	suppressed := map[string]map[string]bool{}
 	for _, e := range events {
 		if liveEvent(e) && e.Kind == "requirement.correction" {
-			id := str(e.Payload["supersedes_event_id"])
-			if suppressed[id] == nil {
-				suppressed[id] = map[string]bool{}
-			}
-			for field := range liveFields(e) {
+			targets, _ := correctionTargets(e) // validated before reduction
+			for field, target := range targets {
+				id := strconv.FormatInt(target, 10)
+				if suppressed[id] == nil {
+					suppressed[id] = map[string]bool{}
+				}
 				suppressed[id][field] = true
 			}
 		}
