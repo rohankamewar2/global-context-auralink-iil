@@ -7,6 +7,9 @@ dist/
 *.log
 data/
 datasets/
-memory/
+/memory/
 recordings/
 tmp/
+artifacts/
+# Private chat continuity contains internal dataset identifiers and local setup.
+/handoff.md
