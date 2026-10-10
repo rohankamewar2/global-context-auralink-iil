@@ -1,0 +1,27 @@
+{
+  "sample_type": "sanitized_demo_summary",
+  "synthetic": true,
+  "is_raw_api_response": false,
+  "verification": {
+    "canonical_outputs": "Read from preserved local exports",
+    "voice_and_chat_transitions": "Observed in user-supplied Sarvam transcripts and local chat outputs"
+  },
+  "journeys": [
+    {
+      "role": "buyer",
+      "initial": {"product": "Steel rods", "quantity": "200", "unit": "kg", "delivery_city": "Noida"},
+      "voice_correction": {"quantity": "450"},
+      "chat_recall": {"product": "Steel rods", "quantity": "450", "unit": "kg", "delivery_city": "Noida"},
+      "published_memory_version": 3
+    },
+    {
+      "role": "seller",
+      "initial": {"product": "MCB", "quantity": "100", "unit": "pieces", "delivery_city": "Noida"},
+      "voice_correction": {"product": "steel", "quantity": "500"},
+      "voice_to_chat_memory_version": 3,
+      "confirmed_chat_correction": {"quantity": "600"},
+      "final_chat_recall": {"product": "steel", "quantity": "600", "unit": "pieces", "delivery_city": "Noida"},
+      "published_memory_version": 4
+    }
+  ]
+}
